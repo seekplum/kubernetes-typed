@@ -1,31 +1,29 @@
 """{{ model.name }} generated type."""
+# pylint: disable=too-many-instance-attributes
 {% if model.direct_import -%}
 {% for imp in model.direct_import -%}
 {{ "import " }}{{ imp }}{{ "\n" -}}
 {% endfor -%}
 {% endif -%}
-from typing import TypedDict{% if model.typing_import %}{{ ", " }}{{ model.typing_import | join(", ") }}{% endif %}{{ "\n" -}}
+from dataclasses import dataclass
+{% if model.typing_import %}from typing import {{ model.typing_import | join(", ") }}{% endif %}{{ "\n" -}}
 {% if model.model_import -%}
 {{ "\n" -}}
-{{ "from kubernetes_typed.client import " }}{{ model.model_import | join(", ") }}{{ "\n" }}
+{% for module_name, imports in model.model_import.items() -%}
+{{ "from ." }}{{ module_name }}{{" import "}}{{ imports | join(", ") }}
+{% endfor -%}
 {% endif -%}
 
 {# Using pep 589 alternative syntax to allow reserved keywords as keys -#}
 {% filter indent(0, True) -%}
-{{ model.name }} = TypedDict(
+@dataclass
+class {{ model.name }}:
 {% filter indent(4, True) -%}
-    "{{ model.name }}",
-{{ "{}," if not model.attributes else "" -}}
+{{ "pass" if not model.attributes else "" -}}
 {% if model.attributes -%}
-    {
-    {% filter indent(4, False) -%}
     {% for attribute in model.attributes -%}
-        "{{ attribute.name -}}"{{ ": " -}}{{ attribute.type -}}{{ ",\n" -}}
+        {{ attribute.name -}}{{ ": " -}}{{ attribute.type -}}{{ "\n" -}}
     {% endfor -%}
-    {% endfilter -%}
-    },
-total=False,
 {% endif -%}
 {% endfilter -%}
-)
 {% endfilter -%}

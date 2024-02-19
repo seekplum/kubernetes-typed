@@ -1,4 +1,7 @@
 """plugin implements mypy plugin."""
+
+# pylint: disable=no-name-in-module
+
 from functools import partial
 from types import MappingProxyType
 from typing import Any, Callable, List, Optional, Tuple
@@ -73,7 +76,7 @@ def function_signature_callback(ctx: FunctionSigContext) -> CallableType:
             if arg_name is None:
                 continue
 
-            _, _, class_name = "{0}".format(signature.ret_type).rpartition(".")
+            _, _, class_name = f"{signature.ret_type}".rpartition(".")
 
             type_name = get_model_openapi_type_name(class_name, arg_name)
 
@@ -111,7 +114,7 @@ def get_attribute_type(api: TypeChecker, name: str) -> Optional[Instance]:
 
     native = NATIVE_TYPES_MAPPING.get(name)
     if native is not None:
-        return api.named_type("{0}.{1}".format(native.__module__, native.__qualname__))
+        return api.named_type(f"{native.__module__}.{native.__qualname__}")
 
     try:
         klass = getattr(kubernetes_client, name, None)

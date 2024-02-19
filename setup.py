@@ -74,7 +74,7 @@ setup(
     python_requires=">=3.8",
     install_requires=[
         "jsonschema-typed-v2",
-        "mypy>=0.800, <=0.910",
+        "mypy",
         "mypy-extensions",
         "PyYAML",
     ],
