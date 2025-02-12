@@ -1,4 +1,5 @@
 """{{ model.name }} generated type."""
+# pylint: disable=too-many-instance-attributes
 {% if model.direct_import -%}
 {% for imp in model.direct_import -%}
 {{ "import " }}{{ imp }}{{ "\n" -}}

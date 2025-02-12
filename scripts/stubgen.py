@@ -11,7 +11,7 @@ sys.path.append(os.path.dirname(SCRIPT_DIR))
 
 from scripts.generate_utils import PROJECT_DIRECTORY, clone_and_generate
 
-DEFAULT_BRANCH = "release-18.0"
+DEFAULT_BRANCH = "release-31.0"
 
 K8S_SOURCE_DIRECTORY = PROJECT_DIRECTORY / "kubernetes-python-source"
 K8S_CLIENT_MODULE_DIRECTORY = K8S_SOURCE_DIRECTORY / "kubernetes"

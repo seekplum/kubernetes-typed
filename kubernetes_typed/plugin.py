@@ -1,4 +1,5 @@
 """plugin implements mypy plugin."""
+# pylint: disable=no-name-in-module
 
 from functools import partial
 from types import MappingProxyType

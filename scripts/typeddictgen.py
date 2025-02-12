@@ -7,8 +7,9 @@ import os
 import re
 import shutil
 import sys
+from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, cast
+from typing import DefaultDict, Dict, List
 
 from jinja2 import Environment, FileSystemLoader
 from kubernetes import client as kubernetes_client
@@ -27,6 +28,7 @@ from scripts.generate_utils import PROJECT_DIRECTORY, comment_codegen, format_co
 DICT_CLIENT_TEMPLATE_DIRECTORY = PROJECT_DIRECTORY / "scripts" / "templates" / "typeddict"
 DICT_CLIENT_DIRECTORY = PROJECT_DIRECTORY / "kubernetes_typed" / "client"
 DICT_CLIENT_MODELS_DIRECTORY = DICT_CLIENT_DIRECTORY / "models"
+CLASS_SUFFIX = "Dict"
 
 
 class Attribute:
@@ -39,7 +41,7 @@ class Attribute:
         self.model_name = model_name
         self.direct_import: List[str] = []
         self.typing_import: List[str] = []
-        self.model_import: Dict[str, List[str]] = {}
+        self.model_import: DefaultDict[str, List[str]] = defaultdict(list)
 
         self.type = self.parse_type(class_name)
 
@@ -82,7 +84,7 @@ class Attribute:
             raise NameError("Attribute with missing model: {0}".format(class_name))
 
         module = klass.__module__.replace("kubernetes.", "kubernetes_typed.")
-        typ = "{0}Dict".format(klass.__qualname__)
+        typ = "{0}{1}".format(klass.__qualname__, CLASS_SUFFIX)
 
         # recursive types not supported https://github.com/python/mypy/issues/731
         if typ == self.model_name:
@@ -90,16 +92,12 @@ class Attribute:
             self.typing_import.append("Dict")
             typ = "Dict[Any, Any]"
         else:
-            if self.model_import.get(module) is not None:
-                self.model_import[module].append(typ)
-            else:
-                self.model_import[module] = []
-                self.model_import[module].append(typ)
+            self.model_import[module].append(typ)
 
         return typ
 
 
-class Model:
+class Model:  # pylint: disable=too-many-instance-attributes
     """Represents parsed state of kubernetes client model."""
 
     def __init__(self, class_name: str, klass: object) -> None:
@@ -112,66 +110,29 @@ class Model:
 
         self.module_full_name = klass.__module__.replace("kubernetes.", "kubernetes_typed.")
         self.module_name = klass.__module__.rpartition(".")[2]
-        self.name = "{0}Dict".format(class_name)
+        self.name = "{0}{1}".format(class_name, CLASS_SUFFIX)
 
-        oapi = getattr(klass, OPENAPI_ATTRIBUTE)
-        attrs = getattr(klass, ATTRIBUTE_NAME_ATTRIBUTE)
+        oapi: Dict[str, str] = getattr(klass, OPENAPI_ATTRIBUTE)
+        attrs: Dict[str, str] = getattr(klass, ATTRIBUTE_NAME_ATTRIBUTE)
 
         self.attributes: List[Attribute] = []
 
         for name, typ in oapi.items():
             self.attributes.append(Attribute(attrs[name], typ, self.name))
 
-        self.direct_import = self.uniq_imports_list("direct_import")
-        self.typing_import = self.uniq_imports_list("typing_import")
-        self.model_import = self.uniq_imports_dict("model_import")
+        self.direct_import = self.uniq_imports([attr.direct_import for attr in self.attributes])
+        self.typing_import = self.uniq_imports([attr.typing_import for attr in self.attributes])
+        self.model_import = {
+            module_name: new_imports
+            for attr in self.attributes
+            for module_name, imports in attr.model_import.items()
+            if (new_imports := self.uniq_imports([imports]))
+        }
 
-    def uniq_imports_dict(self, import_type: str) -> Dict[str, List[str]]:
-        """Get uniq client import for the model."""
-        model_import: Dict[str, List[str]] = {}
-
-        # get all imports
-        imports = [getattr(attr, import_type, None) for attr in self.attributes]
-
-        for combo in cast(List[Dict[str, List[str]]], imports):
-            for module, imp in combo.items():
-                if model_import.get(module) is not None:
-                    model_import[module].extend(imp)
-                else:
-                    model_import[module] = []
-                    model_import[module].extend(imp)
-
-        # uniq and sort
-        for module, models in model_import.items():
-            mod = models
-            mod = list(set(mod))
-            mod.sort()
-            model_import[module] = mod
-
-        return model_import
-
-    def uniq_imports_list(self, import_type: str) -> List[str]:
+    def uniq_imports(self, imports: List[List[str]]) -> List[str]:
         """Get uniq import for the model."""
-        # get all imports
-        imports = [getattr(attr, import_type, None) for attr in self.attributes]
-
-        # flatten
-        imports = [imp for sublist in imports for imp in cast(list[str], sublist)]
-
-        # remove nulls
-        imports = [imp for imp in imports if imp is not None]
-
-        # uniq
-        imports = list(set(imports))
-
-        # sort
-        imports.sort()
-
-        # remove deplicate
-        if self.name in imports:
-            imports.remove(self.name)
-
-        return cast(list[str], imports)
+        # flatten and uniq and sort
+        return sorted({imp for sublist in imports if sublist for imp in sublist if imp and imp != self.name})
 
 
 def filter_models_classes(klass: object) -> bool:
@@ -184,7 +145,7 @@ def filter_models_classes(klass: object) -> bool:
     return check
 
 
-def generate_dicts(client_dir: Path, models_dir: Path) -> None:
+def generate_dicts(client_dir: Path, models_dir: Path) -> None:  # pylint: disable=too-many-locals
     """Generate TypedDict for kubernetes models."""
     model_classes = inspect.getmembers(kubernetes_client, filter_models_classes)
 
@@ -204,11 +165,11 @@ def generate_dicts(client_dir: Path, models_dir: Path) -> None:
         shutil.rmtree(client_dir)
 
     os.makedirs(client_dir)
-    with open(client_dir / "__init__.py", "w+") as codegen_file:
+    with open(client_dir / "__init__.py", "w+", encoding="utf-8") as codegen_file:
         codegen_file.write(init_definition)
 
     os.makedirs(models_dir)
-    with open(models_dir / "__init__.py", "w+") as codegen_file:
+    with open(models_dir / "__init__.py", "w+", encoding="utf-8") as codegen_file:
         codegen_file.write(init_definition)
 
     for model in models:
@@ -216,12 +177,16 @@ def generate_dicts(client_dir: Path, models_dir: Path) -> None:
 
         klass_definition = template.render(model=model)
 
-        with open(models_dir / "{0}.py".format(model.module_name), "w+") as codegen_file:
+        with open(models_dir / f"{model.module_name}.py", "w+", encoding="utf-8") as codegen_file:
             codegen_file.write(klass_definition)
 
     comment_codegen(client_dir, "typeddictgen")
     format_codegen(client_dir)
 
 
-if __name__ == "__main__":
+def main() -> None:
     generate_dicts(DICT_CLIENT_DIRECTORY, DICT_CLIENT_MODELS_DIRECTORY)
+
+
+if __name__ == "__main__":
+    main()
