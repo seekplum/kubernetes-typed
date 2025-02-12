@@ -3,13 +3,14 @@
 """Generating kubernetes model dicts."""
 
 import inspect
+import keyword
 import os
 import re
 import shutil
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import DefaultDict, Dict, List
+from typing import DefaultDict, Dict, List, Optional
 
 from jinja2 import Environment, FileSystemLoader
 from kubernetes import client as kubernetes_client
@@ -28,13 +29,35 @@ from scripts.generate_utils import PROJECT_DIRECTORY, comment_codegen, format_co
 DICT_CLIENT_TEMPLATE_DIRECTORY = PROJECT_DIRECTORY / "scripts" / "templates" / "typeddict"
 DICT_CLIENT_DIRECTORY = PROJECT_DIRECTORY / "kubernetes_typed" / "client"
 DICT_CLIENT_MODELS_DIRECTORY = DICT_CLIENT_DIRECTORY / "models"
-CLASS_SUFFIX = "Dict"
+CLASS_SUFFIX = "Type"
+
+
+def _is_python_keyword(s: str) -> bool:
+    return s in keyword.kwlist
+
+
+def _repl_char(match: re.Match) -> str:
+    if match.span()[0] == 0:
+        return ""
+    return "_"
+
+
+def _remove_special_chars(s: str) -> str:
+    return re.sub(r'[^a-zA-Z0-9_]', _repl_char, s)
 
 
 class Attribute:
     """Represents parsed state of kubernetes client model attribute."""
 
-    def __init__(self, name: str, class_name: str, model_name: str) -> None:
+    def __init__(
+        self,
+        name: str,
+        class_name: str,
+        model_name: str,
+        *,
+        field_value: Optional[str] = None,
+        field_import: Optional[Dict[str, List[str]]] = None,
+    ) -> None:
         """Parse attribute parameters."""
         self.name = name
         self.class_name = class_name
@@ -44,6 +67,9 @@ class Attribute:
         self.model_import: DefaultDict[str, List[str]] = defaultdict(list)
 
         self.type = self.parse_type(class_name)
+        self.field_value = field_value
+        for m, imps in (field_import or {}).items():
+            self.model_import[m].extend(imps)
 
     def parse_type(self, class_name: str) -> str:
         """Get attribute type from its class name."""
@@ -118,15 +144,40 @@ class Model:  # pylint: disable=too-many-instance-attributes
         self.attributes: List[Attribute] = []
 
         for name, typ in oapi.items():
-            self.attributes.append(Attribute(attrs[name], typ, self.name))
+            attr_name = attrs[name]
+            field_value = None
+            field_import = None
+            new_attr_name = _remove_special_chars(attr_name)
+            is_keyword = _is_python_keyword(new_attr_name)
+            if is_keyword or new_attr_name != attr_name:
+                field_value = 'field(metadata={{"alias": "{0}"}})'.format(attr_name)
+                field_import = {"dataclasses": ["field"]}
+            if is_keyword:
+                attr_name = f"{new_attr_name}_"
+            else:
+                attr_name = new_attr_name
+
+            self.attributes.append(
+                Attribute(
+                    attr_name,
+                    typ,
+                    self.name,
+                    field_value=field_value,
+                    field_import=field_import,
+                )
+            )
 
         self.direct_import = self.uniq_imports([attr.direct_import for attr in self.attributes])
         self.typing_import = self.uniq_imports([attr.typing_import for attr in self.attributes])
-        self.model_import = {
-            module_name: new_imports
+        model_import = {
+            module_name: imports
             for attr in self.attributes
             for module_name, imports in attr.model_import.items()
-            if (new_imports := self.uniq_imports([imports]))
+        }
+        model_import.setdefault("dataclasses", []).append("dataclass")
+        self.model_import = {
+            module_name: self.uniq_imports([imports])
+            for module_name, imports in model_import.items()
         }
 
     def uniq_imports(self, imports: List[List[str]]) -> List[str]:
